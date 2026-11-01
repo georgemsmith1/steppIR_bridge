@@ -1,33 +1,125 @@
 import socket
 import time
 import re
+import json
+import os
 
-RIG_IP = "127.0.0.1"
-RIG_PORT = 4532
-MOXA_IP = "192.168.1.254"
-MOXA_PORT = 4002
+# Configuration file path
+CONFIG_FILE = "config.json"
 
-print("Connecting to Moxa NPort (Strict Data Out Set Release)...")
+# Default fallback values
+defaults = {
+    "RIG_IP": "127.0.0.1",
+    "RIG_PORT": 4532,
+    "SDA100_IP": "192.168.1.254",
+    "SDA100_PORT": 4002
+}
+
+def load_config():
+    """Load settings from config file, fallback to defaults if missing or corrupted."""
+    if os.path.exists(CONFIG_FILE):
+        try:
+            with open(CONFIG_FILE, 'r') as f:
+                config = json.load(f)
+                # Ensure all required keys exist
+                for key in defaults:
+                    if key not in config:
+                        config[key] = defaults[key]
+                return config
+        except Exception:
+            print("Warning: Configuration file corrupted. Using defaults.")
+            return defaults.copy()
+    return defaults.copy()
+
+def save_config(config):
+    """Save the updated configuration values to the JSON file."""
+    try:
+        with open(CONFIG_FILE, 'w') as f:
+            json.dump(config, f, indent=4)
+        print("-> Settings saved successfully!\n")
+    except Exception as e:
+        print(f"-> Error saving configuration: {e}\n")
+
+def get_user_config():
+    """Display current configurations and allow interactive updates."""
+    config = load_config()
+    
+    print("=" * 50)
+    print("      SteppIR SDA100 Bridge Configuration      ")
+    print("=" * 50)
+    print("Press [ENTER] to keep the current value, or type a new one.")
+    print("-" * 50)
+    
+    # Query RIG_IP
+    val = input(f"Rig IP [{config['RIG_IP']}]: ").strip()
+    if val:
+        config['RIG_IP'] = val
+        
+    # Query RIG_PORT
+    while True:
+        val = input(f"Rig Port [{config['RIG_PORT']}]: ").strip()
+        if not val:
+            break
+        try:
+            config['RIG_PORT'] = int(val)
+            break
+        except ValueError:
+            print("Invalid port number. Please enter digits only.")
+
+    # Query SDA100_IP
+    val = input(f"SDA100 IP [{config['SDA100_IP']}]: ").strip()
+    if val:
+        config['SDA100_IP'] = val
+
+    # Query SDA100_PORT
+    while True:
+        val = input(f"SDA100 Port [{config['SDA100_PORT']}]: ").strip()
+        if not val:
+            break
+        try:
+            config['SDA100_PORT'] = int(val)
+            break
+        except ValueError:
+            print("Invalid port number. Please enter digits only.")
+
+    print("-" * 50)
+    save_config(config)
+    return config
+
+# --- Main Program Execution ---
+
+# 1. Get configurations (Loads last saved, updates if user modifies)
+config = get_user_config()
+
+RIG_IP = config["RIG_IP"]
+RIG_PORT = config["RIG_PORT"]
+SDA100_IP = config["SDA100_IP"]
+SDA100_PORT = config["SDA100_PORT"]
+
+print(f"Connecting to SteppIR SDA100 controller at {SDA100_IP}:{SDA100_PORT}...")
 try:
-    moxa_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    moxa_sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-    moxa_sock.settimeout(2.0)
-    moxa_sock.connect((MOXA_IP, MOXA_PORT))
-    print("-> Connected to Moxa successfully!")
+    sda_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sda_sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+    sda_sock.settimeout(2.0)
+    sda_sock.connect((SDA100_IP, SDA100_PORT))
+    print("-> Connected to SDA100 successfully!")
 except Exception as e:
-    print(f"-> Failed to connect to Moxa: {e}")
+    print(f"-> Failed to connect to SDA100: {e}")
     exit(1)
 
-print("Connecting to Hamlib rigctld...")
+print(f"Connecting to Rig at {RIG_IP}:{RIG_PORT}...")
 try:
     rig_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     rig_sock.settimeout(1.0)
     rig_sock.connect((RIG_IP, RIG_PORT))
-    print("-> Connected to rigctld successfully!")
+    print("-> Connected to Rig successfully!")
 except Exception as e:
-    print(f"-> Failed to connect to rigctld: {e}")
-    moxa_sock.close()
+    print(f"-> Failed to connect to Rig: {e}")
+    sda_sock.close()
     exit(1)
+
+print("\nBridge running. Press Ctrl+C to stop.")
+print("-" * 50)
 
 last_khz = 0
 
@@ -66,7 +158,7 @@ try:
                         # Pos 10:  0x0D       -> \r Carriage Return terminator
                         packet = bytes([0x40, 0x41, 0x00, fh, fm, fl, 0x00, 0x00, 0x39, 0x63, 0x0D])
                         
-                        moxa_sock.sendall(packet)
+                        sda_sock.sendall(packet)
                         print(f"Sent {freq_khz} kHz -> Data Out Hex: {packet.hex().upper()}")
                         last_khz = freq_khz
                         
@@ -79,4 +171,5 @@ except KeyboardInterrupt:
     print("\nClosing bridge connections safely...")
 finally:
     rig_sock.close()
-    moxa_sock.close()
+    sda_sock.close()
+EOF
